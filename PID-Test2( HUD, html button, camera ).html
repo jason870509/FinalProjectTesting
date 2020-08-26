@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>three.js / cannon.js example</title>
+    <meta charset="utf-8">
+    <style>
+        #info {
+            position: absolute;
+            top: 2%;
+            width: 100%;
+            text-align: center;
+        }
+        
+        body {
+            overflow: hidden;
+        }
+    </style>
+
+</head>
+
+<body>
+    <div id="info">
+        <input type=range min=0 max=5 step="0.5" value=3 id='yref'>
+        <font id='hover' style="font-family:verdana;margin-left: 10px;" face="monospace" size='4' color='Black'>y:2</font>
+        <input type=range min=-1 max=1 step="0.1" value=0 id='rotatateref'>
+        <font id='yaw' style="font-family:verdana;margin-left: 10px;" face="monospace" size='4' color='Black'>rotatate:0</font>
+        <input type=range min=-1 max=1 step="0.1" value=0 id='rollref'>
+        <font id='roll' style="font-family:verdana;margin-left: 10px;" face="monospace" size='4' color='Black'>roll:0</font>
+        <input type=range min=-1 max=1 step="0.1" value=0 id='pitchref'>
+        <font id='pitch' style="font-family:verdana;margin-left: 10px;" face="monospace" size='4' color='Black'>pitch:0</font><br>
+        <button id="view1" style="width:20%">change view</button>
+        <script src="libs/Three.js"></script>
+        <script src="build/cannon.js"></script>
+        <script src="build/Gyroscope.js"></script>
+        <script src="https://threejs.org/examples/js/controls/OrbitControls.js"></script>
+        <script src="https://jyunming-chen.github.io/tutsplus/js/KeyboardState.js"></script>
+        <script src="https://code.jquery.com/jquery-2.1.4.min.js"></script>
+        <script src="https://raw.githack.com/jyunming-chen/tutsplus/master/js/text2D.js"></script>
+
+        <script>
+            var clock;
+            var airplane, world, body, timeStep = 1 / 60,
+                camera1, camera2,
+                controlcamera, scene, renderer;
+            var motors = [],
+                cylinder = [],
+                propellers = [];
+            var state = [0, 0];
+            var keyboard = new KeyboardState();
+            var useGyro = false;
+            var yy, vv, vvr;
+            var yref;
+            var rr, rref;
+            var omega, r;
+            var integral = 0,
+                integralr = 0;;
+            var height = 3,
+                yaws = 0,
+                rolls = 0,
+                pitchs = 0;
+            var angle1 = 0,
+                angle12 = 0;
+            var pointer = [],
+                sprite = [];
+            var sceneHUD, cameraHUD, sceneHUD1, cameraHUD1, cameraHUD2;
+            var f, f2;
+            initThree();
+            initCannon();
+            animate();
+
+            $('#yref').change(function() {
+                height = $(this).val();
+            });
+            $('#rotatateref').change(function() {
+                height = $(this).val();
+            });
+            $('#rollref').change(function() {
+                height = $(this).val();
+            });
+            $('#pitchref').change(function() {
+                height = $(this).val();
+            });
+            $('#view1').click(function() {
+                useGyro = !useGyro;
+            });
+
+            function initCannon() {
+
+                world = new CANNON.World();
+                world.gravity.set(0, -10, 0);
+                world.broadphase = new CANNON.NaiveBroadphase();
+                world.solver.iterations = 10;
+
+                ////////////////////////////////////////////////////////////////////////////////////////////////////////
+                //airplane
+
+                var size = 1;
+                var boxShape = new CANNON.Box(new CANNON.Vec3(size, size, size * 0.3));
+
+                body = new CANNON.Body({
+                    mass: 5
+                });
+                body.addShape(boxShape);
+                body.position.set(0, 0, 0);
+
+
+                var cylinderShape = new CANNON.Cylinder(size * 0.6, size * 0.6, size * 0.2, 80);
+
+                for (let i = 0; i < 4; i++) {
+                    motors[i] = new CANNON.Body({
+                        mass: 0.5,
+                        shape: cylinderShape,
+                        position: new CANNON.Vec3(-size, 0.5, size)
+                    });
+                    world.addBody(motors[i]);
+
+                }
+
+                motors[1].position.set(-size, 0.5, -size);
+                motors[2].position.set(size, 0.5, -size);
+                motors[3].position.set(size, 0.5, size);
+                console.log(motors[1].position);
+
+                for (let i = 0; i < 4; i++) {
+                    var c = new CANNON.LockConstraint(motors[i], body);
+                    world.addConstraint(c);
+                }
+
+                world.addBody(body);
+
+                world.addEventListener("postStep", function(event) {
+                    motors[0].torque = new CANNON.Vec3(0, 0, 0);
+                    motors[1].torque = new CANNON.Vec3(0, 0, 0);
+                    motors[2].torque = new CANNON.Vec3(0, 0, 0);
+                    motors[3].torque = new CANNON.Vec3(0, 0, 0);
+                });
+            }
+
+            function initThree() {
+                clock = new THREE.Clock();
+                scene = new THREE.Scene();
+                light = new THREE.PointLight(0xffffff);
+                light.position.set(100, 100, 210);
+                scene.add(light);
+                camera1 = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 1000);
+                camera1.position.z = 10;
+                camera1.position.y = 3;
+                scene.add(camera1);
+                controlcamera = camera1;
+
+                camera2 = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 1, 1000);
+                cameraHUD = new THREE.OrthographicCamera(-15, 15, 10, -10, -10, 1000);
+                cameraHUD.position.z = 100;
+                window.addEventListener('resize', onWindowResize, false);
+
+                renderer = new THREE.WebGLRenderer();
+                renderer.setClearColor(0x888888);
+                renderer.setSize(window.innerWidth, window.innerHeight);
+
+                document.body.appendChild(renderer.domElement);
+                let controls = new THREE.OrbitControls(camera1, renderer.domElement);
+
+                var plane = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshBasicMaterial({
+                    color: 0x66f986
+                }));
+                plane.position.set(0, -5, 0)
+                scene.add(plane)
+                plane.rotation.x = -Math.PI / 2
+
+                ////////////////////////////////////////////////////////////////////////////////////////////////////////
+                //airplane
+
+                airplane = new THREE.Object3D();
+                scene.add(airplane);
+                mesh = new THREE.Mesh(new THREE.BoxGeometry(2, 0.6, 2), new THREE.MeshBasicMaterial({
+                    color: 0xff0000,
+                    wireframe: true
+                }));
+                airplane.add(mesh);
+                /* gyro = new THREE.Gyroscope();
+                 scene.add (gyro)
+                 gyro.add (camera2)
+                 airplane.add (gyro)*/
+                //gyro.add(light);
+                pro = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.2, 0.05), new THREE.MeshBasicMaterial({
+                    color: 0x555555
+                }));
+
+                for (i = 0; i < 4; i++) {
+                    cylinder[i] = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 0.2, 50, 2, true), new THREE.MeshBasicMaterial({
+                        color: 0x0000cc,
+                        side: THREE.DoubleSide
+                    }))
+                    cylinder[i].add(pro.clone());
+                    scene.add(cylinder[i]);
+                }
+
+                ////////////////////////////////////////////////////////////////////////////////////////////////////////
+                //scene
+                var trees = [];
+                for (i = 0; i < 4; i++) {
+                    trees[i] = new THREE.Mesh(new THREE.CylinderGeometry(5, 5, 10, 30), new THREE.MeshBasicMaterial({
+                        color: 0x54350a
+                    }));
+                    scene.add(trees[i]);
+                }
+                trees[0].position.set(15, 0, 30);
+                trees[1].position.set(-20, 0, 10);
+                trees[2].position.set(35, 0, -10);
+                trees[3].position.set(-10, 0, -40);
+
+                var houses = [];
+                for (i = 0; i < 2; i++) {
+                    houses[i] = new THREE.Mesh(new THREE.BoxGeometry(10, 20, 10), new THREE.MeshBasicMaterial({
+                        color: 0x565149
+                    }));
+                    scene.add(houses[i]);
+                }
+                houses[0].position.set(0, 5, 30);
+                houses[1].position.set(25, 5, -10);
+
+                ////////////////////////////////////////////////////////////////////////////////////////////////////////
+                //PID Setting
+                yy = 2;
+                vv = 0;
+                yref = height;
+
+                omega = 18.7;
+                ////////////////////////////////////////////////////////////////////////////////////////////////////////
+                //sceneHUD
+
+                renderer.autoClear = false;
+                sceneHUD = new THREE.Scene();
+
+                whRatio = window.innerWidth / window.innerHeight;
+                halfH = 10;
+                halfW = whRatio * halfH;
+                let loader = new THREE.TextureLoader();
+                loader.crossOrigin = '';
+                let omegaTurn = loader.load('https://i.imgur.com/cWHsLd4.png');
+                omegaTurn.wrapS = THREE.RepeatWrapping;
+
+                var circle = [];
+                for (i = 0; i < 4; i++) {
+                    circle[i] = new THREE.Mesh(new THREE.CircleGeometry(2, 80), new THREE.MeshPhongMaterial({
+                        map: omegaTurn,
+                        side: THREE.DoubleSide
+                    }));
+                    scene.add(circle[i])
+                }
+
+                var pointerer = [],
+                    all = [];
+
+                for (i = 0; i < 4; i++) {
+                    pointer[i] = new THREE.Group();
+                    all[i] = new THREE.Group();
+                    pointerer[i] = new THREE.Mesh(new THREE.PlaneGeometry(2, 0.1), new THREE.MeshBasicMaterial({
+                        color: 0xff0000
+                    }));
+                    pointer[i].add(pointerer[i]);
+                    all[i].add(circle[i]);
+                    all[i].add(pointer[i]);
+                }
+
+                for (let i = 0; i < 4; i++) {
+                    sceneHUD.add(all[i]);
+                    pointerer[i].position.x = -1;
+                }
+
+                all[0].position.set(-halfW / 2.5, -(halfH - halfW / 10), 0);
+                all[1].position.set(-halfW / 8, -(halfH - halfW / 10), 0);
+                all[2].position.set(halfW / 8, -(halfH - halfW / 10), 0);
+                all[3].position.set(halfW / 2.5, -(halfH - halfW / 10), 0);
+
+                ////////////////////////////////////////////////////////////////////
+                var Text2D = THREE_Text.MeshText2D;
+                var SpriteText2D = THREE_Text.SpriteText2D;
+                var textAlign = THREE_Text.textAlign;
+
+                for (i = 0; i < 4; i++) {
+                    sprite[i] = new SpriteText2D("SPRITE", {
+                        align: textAlign.center,
+                        font: '100px Arial',
+                        fillStyle: '#ffffff',
+                        antialias: true
+                    });
+                    scene.add(sprite[i]);
+                    sprite[i].scale.set(0.005, 0.005, 0.005);
+                    pointer[i].add(sprite[i]);
+                    sprite[i].position.y = 1;
+                }
+            }
+
+            function onWindowResize() {
+                // renderer resize
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                whRatio = window.innerWidth / window.innerHeight;
+
+                // perspective camera resize
+                camera1.aspect = whRatio;
+                camera1.updateProjectionMatrix();
+
+                // orthographic camera resize
+                halfH = 20;
+                halfW = whRatio * halfH;
+
+                cameraHUD.left = -halfW;
+                cameraHUD.right = halfW;
+                cameraHUD.top = halfH;
+                cameraHUD.bottom = -halfH;
+                cameraHUD.updateProjectionMatrix();
+
+                all[0].position.set(-halfW / 2.5, -(halfH - halfW / 10), 0)
+                all[1].position.set(-halfW / 8, -(halfH - halfW / 10), 0)
+                all[2].position.set(halfW / 8, -(halfH - halfW / 10), 0)
+                all[3].position.set(halfW / 2.5, -(halfH - halfW / 10), 0)
+            }
+
+            function controlLawhover(dt) {
+                let error = yref - yy;
+                integral += error * dt;
+
+                const KP = 7;
+                const KI = 10;
+                const KD = 5;
+                omega = KP * error + KI * integral + KD * (-vv);
+
+                //omega = Math.clamp (omega, 0, 100);
+                //console.log (error.toFixed(1) + ' + ' + omega.toFixed(1))
+                //console.log ("error:"+error.toFixed(1)+" yfer:"+yref+" y:"+yy);
+                return omega;
+
+            }
+
+            function animate() {
+                if (useGyro == false) controlcamera = camera1
+                else {
+                    controlcamera = camera2;
+                    camera2.position.copy(airplane.localToWorld(new THREE.Vector3(-5, 0.5, 0)));
+                    camera2.lookAt(airplane.position);
+                }
+
+                angle12 += 0.3;
+                angle1 -= 0.3;
+                let dt = clock.getDelta();
+                yref = height;
+
+                $('#hover').text("y:" + yref)
+                let omega = controlLawhover(dt);
+                for (i = 0; i < 4; i++) {
+                    sprite[i].text = omega.toFixed(2)
+                    angle = 3.14 / 180 * omega
+                    pointer[i].rotation.z = -angle
+                }
+
+                // process
+                let gravity = -70;
+                let KK = 0.1;
+                f = KK * omega * omega + gravity;
+                // process: Euler
+                vv += (f / 7) * dt;
+                yy += vv * dt;
+                ////////////////////////////
+
+                motors[0].force = new CANNON.Vec3(0, 17.5 + f / 4, 0);
+                motors[1].force = new CANNON.Vec3(0, 17.5 + f / 4, 0);
+                motors[2].force = new CANNON.Vec3(0, 17.5 + f / 4, 0);
+                motors[3].force = new CANNON.Vec3(0, 17.5 + f / 4, 0);
+
+                if (yy > yref) {
+                    stay = 1;
+                }
+
+                keyboard.update();
+                if (keyboard.pressed('A')) {
+                    motors[0].torque = new CANNON.Vec3(0, omega, 0);
+                    motors[1].torque = new CANNON.Vec3(0, -omega, 0);
+                    motors[2].torque = new CANNON.Vec3(0, omega, 0);
+                    motors[3].torque = new CANNON.Vec3(0, -omega, 0);
+                }
+
+                if (keyboard.pressed('D')) {
+                    motors[0].torque = new CANNON.Vec3(0, -2.5, 0);
+                    motors[1].torque = new CANNON.Vec3(0, -2.5, 0);
+                    motors[2].torque = new CANNON.Vec3(0, -2.5, 0);
+                    motors[3].torque = new CANNON.Vec3(0, -2.5, 0);
+                }
+
+                updatePhysics();
+                render();
+
+            }
+
+            function updatePhysics() {
+                // Step the physics world
+                world.step(timeStep);
+                yref = height;
+
+                // Copy coordinates from Cannon.js to Three.js
+                airplane.position.copy(body.position);
+                airplane.quaternion.copy(body.quaternion);
+
+                for (i = 0; i < 4; i++) {
+                    cylinder[i].position.copy(motors[i].position);
+                    cylinder[i].quaternion.copy(motors[i].quaternion);
+                }
+
+                cylinder[0].rotation.y = angle12 + omega;
+                cylinder[1].rotation.y = angle1 - omega;
+                cylinder[2].rotation.y = angle12 + omega;
+                cylinder[3].rotation.y = angle1 - omega;
+            }
+
+            function render() {
+                renderer.clear(true);
+                requestAnimationFrame(animate);
+                renderer.render(scene, controlcamera);
+                renderer.render(sceneHUD, cameraHUD);
+            }
+        </script>
+</body>
+
+</html>
